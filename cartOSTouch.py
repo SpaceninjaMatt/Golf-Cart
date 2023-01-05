@@ -137,7 +137,7 @@ def steeringControl(direction, angle): #-35 and 35 or 100 for centering
     global last_angle
     
     if direction == 'C':
-        location = 'C%'
+        location = '$C\n'
         steeringPort.write(location.encode('utf-8'))
     elif angle != last_angle:
         if(direction == 'L'):
