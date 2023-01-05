@@ -4,7 +4,7 @@
 #define steps_from_left 4500
 #define limit_pin     10
 #define max_rate      4000 //hz
-#define min_rate      1000 //hz
+#define min_rate      500 //hz
 
 // global variables
 long step_val;    // current step count
@@ -12,8 +12,9 @@ long step_ref;    // desired step count
 int  dir;
 int done;
 int frequency;
-long steps;
-int up_down_steps;
+int last_val;
+double steps;
+double up_down_steps;
 
 
 // setup code
@@ -44,6 +45,7 @@ void setup() {
 void setupTimer2() {
   noInterrupts();
   // Clear registers
+  //Serial.println(frequency);
   TCCR2A = 0;
   TCCR2B = 0;
   TCNT2 = 0;
@@ -108,32 +110,27 @@ void loop() {
   int numBytes;
   //Ramp code
   noInterrupts();
-  
-  if(steps <= up_down_steps && done == 0){ //done is 0 when the motor is moving. This is from 0 steps to half the travel
-    frequency += max_rate/up_down_steps; //4000hz/half the travel (ex 4000hz/2000steps) 2hz increase per step
-    setupTimer2(); // updates the frequency
-  }
-  else if(steps > up_down_steps && done == 0) {// the ramp down half 
-    frequency -= max_rate/up_down_steps;
-    setupTimer2();
-  }
-  if(done == 1){
-    frequency = min_rate;//resets the frwuqncy when the motor is no longer moving
-    setupTimer2();
-  }
-  
+    //Serial.println(up_down_steps);
+    if(steps <= up_down_steps && done == 0){ //done is 0 when the motor is moving. This is from 0 steps to half the travel
+      double tF = (((max_rate-min_rate)/2000)*steps)+min_rate;
+      Serial.println(tF);
+      frequency = int(tF); //4000hz/half the travel (ex 4000hz/2000steps) 2hz increase per step
+      setupTimer2(); // updates the frequency
+    }
+    else if(steps > up_down_steps && done == 0) {// the ramp down half 
+      double tF = (((max_rate-min_rate)/2000)*(up_down_steps*2-steps))+min_rate;
+      Serial.println(tF);
+      frequency = int(tF);
+      setupTimer2();
+    }
+    if(done == 1 && frequency!= min_rate){
+      frequency = min_rate;//resets the frwuqncy when the motor is no longer moving
+      setupTimer2();
+    }
   interrupts();
-  
-
   // Is new command available ?
   numBytes = Serial.readBytesUntil('\n', cmdStr, 10);
-    
-    
     // CRITICAL SECTION
-    
-      
-    // parse cmdstr 
-    //cmdStr[numBytes-1]= '\0';
   if (numBytes != 0) {
     // CRITICAL SECTION
     noInterrupts();     
@@ -152,11 +149,17 @@ void loop() {
     }
     if (cmdStr[1] == 'C'){   
       step_cal();   
-    }  
-    done = 0; 
+    } 
+    int round = (step_ref/10); 
+    step_ref = round*10;
+    if(abs(step_val) > abs(step_ref)){
+      frequency = min_rate;//resets the frwuqncy when the motor is no longer moving
+      setupTimer2();      
+    }
+    last_val = step_ref;
     steps = 0; //resets step counter for current task
     int diff = abs(step_ref-step_val); //find the amount of steps for total  travel
     up_down_steps = diff/2;//find the amount of steps for half the travel
     interrupts();
-    }
   }
+}
