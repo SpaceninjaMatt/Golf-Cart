@@ -29,7 +29,7 @@ def make_window2():
               [sg.Push(), sg.Text("Choose a drive mode",font = ("Helvetica", 25)), sg.Push()],
               [sg.Push(), sg.Text("Current:",font = ("Helvetica", 30)), sg.Text("", key = '-TEXT-',font = ("Helvetica", 30)), sg.Push()],
               [sg.Push(), sg.Button('Forward', font = ("Helvetica",35), size = (6,6)), sg.Button('Neutral', font = ("Helvetica",35), size = (6,6)), sg.Button('Reverse', font = ("Helvetica",35), size = (6,6)),sg.Push()],
-              [sg.Push(), sg.Button('Exit', font = ("Helvetica",30), size = (15,2)), sg.Push()],
+              [sg.Push(), sg.Button('Toggle Stepper On', key = '-STEPPER-', font = ("Helvetica",28), size = (15,2)),sg.Button('Exit', font = ("Helvetica",28), size = (15,2)), sg.Push()],
               [sg.VPush()]]
     
     return sg.Window('cartOS', layout, resizable=True, size=(800,480), no_titlebar=True, location=(0,0), keep_on_top= True)
@@ -40,6 +40,7 @@ def make_window3():
               [sg.Push(), sg.Text("Steering (A):",font = ("Helvetica", 20)), sg.Text("ON", key = '-STR-',font = ("Helvetica", 20)), sg.Push()],
               [sg.Push(), sg.Text("Cruise Control (Bumpers):",font = ("Helvetica", 20)), sg.Text("OFF", key = '-CCTRL-',font = ("Helvetica", 20)), sg.Push()],
               [sg.Push(), sg.Text("Steering cali. (up D-pad): ",font = ("Helvetica", 20)), sg.Text("Done",key = '-HIGH-',font = ("Helvetica", 20)), sg.Push()],
+              [sg.Push(), sg.Text("Steering Type. (down D-pad): ",font = ("Helvetica", 20)), sg.Text("Absolute",key = '-SType-',font = ("Helvetica", 20)), sg.Push()],
               [sg.Push(), sg.Text("Idle timer (L or R D-pad):",font = ("Helvetica", 20)), sg.Text("1", key = '-IDLE_TIME-',font = ("Helvetica", 20)), sg.Push()],
               [sg.Push(), sg.Text(""), sg.Push()],
               [sg.Push(), sg.Text( "Exit Xbox (B)?",font = ("Helvetica", 20)), sg.Push()],
@@ -135,19 +136,23 @@ def lockScreen():
 last_angle = 0
 def steeringControl(direction, angle): #-35 and 35 or 100 for centering
     global last_angle
-    
-    if direction == 'C':
-        location = '$C\n'
-        steeringPort.write(location.encode('utf-8'))
-    elif angle != last_angle:
-        if(direction == 'L'):
-            location = '$L'+ str(int(abs(angle)*100))+'\n'
-        elif(direction == 'R'):
-            location = '$R'+str(int(abs(angle)*100))+'\n'
-        last_angle = angle
-        print(location)
-        steeringPort.write(location.encode('utf-8'))
-        time.sleep(.05)
+    if len(direction)==1:
+        if direction == 'C':
+            location = '$C'
+            steeringPort.write(location.encode('utf-8'))
+        elif angle != last_angle:
+            location = '$'+ direction + str(int(abs(angle)*100))+'\n'
+            last_angle = angle
+            steeringPort.write(location.encode('utf-8'))
+            time.sleep(.05)
+    elif len(direction) == 2:
+        #stepperString = angle
+        if angle != last_angle:
+            stepperString = '$' + direction + str(int(angle))+'\n'
+            #print(stepperString)
+            steeringPort.write(stepperString.encode('utf-8'))
+            last_angle = angle
+            time.sleep(.05)
     
     
     
@@ -346,6 +351,7 @@ def xbox(): #xbox function
         stepPIN.ChangeDutyCycle(0)
         GPIO.output(throttleMode, GPIO.LOW)
         steeringModifier = 0
+        speed = 255
         steeringON = 1
         cruiseRate = 0
         lastGear = 0
@@ -356,6 +362,7 @@ def xbox(): #xbox function
         done = False
         throttleOn = False
         steeringOn = False
+        freqSteer = False
         cruiseCtl = False
         remote = False
         idle = False
@@ -460,14 +467,26 @@ def xbox(): #xbox function
                         steeringOn = True
                     #Streering
                     if steeringOn and not idle:
-                        if joystick.get_axis(0) < -0.05:
-                            TextX = ("Turning Left at {} deg".format(round(joystick.get_axis(0)*-35),2))
-                            steeringControl('L',(joystick.get_axis(0)+.05)*35)
-                        elif joystick.get_axis(0) > 0.15:
-                            TextX = ("Turning Right at {} deg".format(round((joystick.get_axis(0)-.15)*40),2))
-                            steeringControl('R',(joystick.get_axis(0)-.15)*40)
+                        if not freqSteer:
+                            if joystick.get_axis(0) < -0.05:
+                                TextX = ("Turning Left at {} deg".format(round(joystick.get_axis(0)*-35),2))
+                                steeringControl('L',(joystick.get_axis(0)+.05)*35)
+                            elif joystick.get_axis(0) > 0.15:
+                                TextX = ("Turning Right at {} deg".format(round((joystick.get_axis(0)-.15)*40),2))
+                                steeringControl('R',(joystick.get_axis(0)-.15)*40)
+                            else:
+                                steeringControl('L',0)
                         else:
-                            steeringControl('L',0)
+                            rate = abs(joystick.get_axis(0))*(1-steeringModifier) #(0-1)
+                            rate = round(rate*1000,0)
+                            if joystick.get_axis(0) < -0.1:
+                                #TextX = ("Turning Left at {} %".format(rate/10))
+                                steeringControl('LR',rate)
+                            elif joystick.get_axis(0) > 0.15:
+                                #TextX = ("Turning Right at {} %".format(rate/10))
+                                steeringControl('RR',rate)
+                            else:
+                                steeringControl('RR',0)
                     
                     #Brakes
                     if joystick.get_axis(5) !=0: #so it doesnt brake immediatly
@@ -554,13 +573,13 @@ def xbox(): #xbox function
                         GPIO.output(reverse, GPIO.LOW)
                         speedPIN.set_PWM_dutycycle(18,255)
                         
-                    y_button = joystick.get_button(4)
-                    
                         
                     xbox_button = joystick.get_button(12)
                     if xbox_button == 1:
                         IDLE_TIME = 100
                         window['-IDLE_TIME-'].update(IDLE_TIME)
+                        
+                    y_button = joystick.get_button(4)
                     if y_button == 1:
                         GPIO.output(horn, GPIO.HIGH)
                         TextX = ("Horn!")
@@ -593,15 +612,25 @@ def xbox(): #xbox function
                 
                     d_pos = joystick.get_hat(0)
                     #print("D Position: {}".format(d_pos))
-                
-                    if d_pos[1] == 1:
+                    
+                    if d_pos[1] == 1 and (speed == 255 or speed == None):
                         TextX = ("Calibrating Steering")
                         window['-TEXT-'].update(TextX)
                         window.Read(timeout = 10)
                         window['-HIGH-'].update("Done")
                         steeringControl('C',0)
                         time.sleep(10)
-                        
+                    elif d_pos[1] == -1:
+                        if not freqSteer:
+                            freqSteer = True
+                            TextX = ("Steering Toggled")
+                            window['-SType-'].update("Rate");
+                            time.sleep(.5);
+                        else:
+                            freqSteer = False
+                            TextX = ("Steering Toggled")
+                            window['-SType-'].update("Absolute");
+                            time.sleep(.5);
                         
                     if d_pos[0] == 1:
                         IDLE_TIME += .5
@@ -630,6 +659,7 @@ def manual(): #for manual since we need to have forward and reverse
     window2 = make_window2()
     Text = "Neutral"
     GPIO.output(enablePIN,GPIO.LOW)
+    steering = False
     GPIO.output(throttleMode, GPIO.HIGH)
     manualLoop = True
     
@@ -654,6 +684,15 @@ def manual(): #for manual since we need to have forward and reverse
             Text = "Neutral"
             GPIO.output(reverse, GPIO.LOW)
             GPIO.output(forward, GPIO.LOW)
+        elif event == '-STEPPER-':
+            if  not steering:
+                steering = True
+                GPIO.output(enablePIN,GPIO.HIGH)
+                window2['-STEPPER-'].update("Toggle Stepper Off")
+            else:
+                steering = False
+                GPIO.output(enablePIN,GPIO.LOW)
+                window2['-STEPPER-'].update("Toggle Stepper On")
         elif event == 'Exit':
 #             window.close()
             GPIO.output(reverse, GPIO.LOW)
