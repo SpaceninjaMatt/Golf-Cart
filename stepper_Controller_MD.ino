@@ -3,7 +3,7 @@
 #define step_pin      9
 #define steps_from_left 4500
 #define limit_pin     10
-#define max_rate      4000 //hz
+#define max_rate      3000 //hz
 #define min_rate      500 //hz
 
 // global variables
@@ -13,8 +13,9 @@ int  dir;
 int done;
 int frequency;
 int last_val;
-double steps;
-double up_down_steps;
+long steps = 0;
+long up_down_steps;
+bool freqSteer = false;
 
 
 // setup code
@@ -67,26 +68,35 @@ void setupTimer2() {
 ISR(TIMER2_COMPA_vect) {
   
   noInterrupts();
-  // update dir
-  dir = 0;
-  done = 1;//not moving
-  if (step_ref > step_val) {
-    dir = 1;
-    digitalWrite(dir_pin, HIGH);
+  if (!freqSteer){
+    // update dir
+    dir = 0;
+    done = 1;//not moving
+    if (step_ref > step_val) {
+      dir = 1;
+      digitalWrite(dir_pin, HIGH);
+    }
+    if (step_ref < step_val) {
+      dir = -1;
+      digitalWrite(dir_pin, LOW);
+    }
+    
+    // apply pulse  
+    if (dir != 0) { 
+      done = 0;//moving
+      digitalWrite(step_pin, HIGH);
+      delayMicroseconds(int(1000000L/(frequency*2L))); //50% duty cycle
+      digitalWrite(step_pin, LOW);
+      step_val = step_val + dir;
+      steps++; // increases the step count for the ramp
+    }
   }
-  if (step_ref < step_val) {
-    dir = -1;
-    digitalWrite(dir_pin, LOW);
-  }
-  
-  // apply pulse  
-  if (dir != 0) { 
-    done = 0;//moving
+  else{
+    if(frequency > 500){
     digitalWrite(step_pin, HIGH);
-    delayMicroseconds(int(1000000/(frequency*2))); //50% duty cycle
+    delayMicroseconds(int(1000000L/(frequency*2L))); //50% duty cycle
     digitalWrite(step_pin, LOW);
-    step_val = step_val + dir;
-    steps++; // increases the step count for the ramp
+    }
   }
   interrupts();
 }
@@ -111,15 +121,24 @@ void loop() {
   //Ramp code
   noInterrupts();
     //Serial.println(up_down_steps);
+  if (!freqSteer){
     if(steps <= up_down_steps && done == 0){ //done is 0 when the motor is moving. This is from 0 steps to half the travel
-      double tF = (((max_rate-min_rate)/2000)*steps)+min_rate;
-      Serial.println(tF);
+        //double tF = (((max_rate-min_rate)/2000)*steps)+min_rate;
+        double tF = max_rate;
+      if(steps < 500){ //10 steps to max speed
+        tF = min_rate + (max_rate/500)*steps;
+      }
+      Serial.println(String(tF)+"_"+String(steps));
       frequency = int(tF); //4000hz/half the travel (ex 4000hz/2000steps) 2hz increase per step
       setupTimer2(); // updates the frequency
     }
     else if(steps > up_down_steps && done == 0) {// the ramp down half 
-      double tF = (((max_rate-min_rate)/2000)*(up_down_steps*2-steps))+min_rate;
-      Serial.println(tF);
+      //double tF = (((max_rate-min_rate)/2000)*(up_down_steps*2-steps))+min_rate;
+      double tF = max_rate;
+      if(steps-up_down_steps > up_down_steps-500){ //20 steps to max speed
+        tF = min_rate + (max_rate/500)*((2*up_down_steps-steps));
+      }
+      Serial.println(String(tF)+"_"+String(steps));
       frequency = int(tF);
       setupTimer2();
     }
@@ -127,6 +146,7 @@ void loop() {
       frequency = min_rate;//resets the frwuqncy when the motor is no longer moving
       setupTimer2();
     }
+  }
   interrupts();
   // Is new command available ?
   numBytes = Serial.readBytesUntil('\n', cmdStr, 10);
@@ -135,31 +155,47 @@ void loop() {
     // CRITICAL SECTION
     noInterrupts();     
     // parse cmdstr
-    if (cmdStr[1] == 'R'){  
-      step_ref = atof(&cmdStr[2]);
-      if(step_ref > 4000){
-        step_ref = 4000;
+    if (cmdStr[2] != 'R'){
+      freqSteer = false;
+      if (cmdStr[1] == 'R'){  
+        step_ref = atof(&cmdStr[2]);
+        if(step_ref > 4000){
+          step_ref = 4000;
+        }
       }
-    }
-    if (cmdStr[1] == 'L'){  
-      step_ref = -atof(&cmdStr[2]);
-      if(step_ref < -4000){
-        step_ref = -4000;
+      if (cmdStr[1] == 'L'){  
+        step_ref = -atof(&cmdStr[2]);
+        if(step_ref < -4000){
+          step_ref = -4000;
+        }
       }
+      if (cmdStr[1] == 'C'){   
+        step_cal();   
+      } 
+      int round = (step_ref/10); 
+      step_ref = round*10;
+      if(abs(step_val) > abs(step_ref)){
+        frequency = min_rate;//resets the frequency when the motor is no longer moving
+        setupTimer2();      
+      }
+      last_val = step_ref;
+      steps = 0; //resets step counter for current task
+      int diff = abs(step_ref-step_val); //find the amount of steps for total  travel
+      up_down_steps = diff/2;//find the amount of steps for half the travel
     }
-    if (cmdStr[1] == 'C'){   
-      step_cal();   
-    } 
-    int round = (step_ref/10); 
-    step_ref = round*10;
-    if(abs(step_val) > abs(step_ref)){
-      frequency = min_rate;//resets the frwuqncy when the motor is no longer moving
-      setupTimer2();      
+    else{
+      freqSteer = true;
+      double rate = atof(&cmdStr[3]);
+      frequency = int(min_rate+((max_rate-min_rate)*(rate/1000)));
+      Serial.println("RATE" + String(frequency));
+      if (cmdStr[1] == 'R'){
+        digitalWrite(dir_pin, HIGH);
+      }
+      else{
+        digitalWrite(dir_pin,LOW);
+      }
+      setupTimer2();
     }
-    last_val = step_ref;
-    steps = 0; //resets step counter for current task
-    int diff = abs(step_ref-step_val); //find the amount of steps for total  travel
-    up_down_steps = diff/2;//find the amount of steps for half the travel
     interrupts();
   }
 }
